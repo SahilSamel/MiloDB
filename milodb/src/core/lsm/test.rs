@@ -1,54 +1,52 @@
-use crate::core::lsm::sstable::SSTable; // Import the SSTable struct
-use crate::core::lsm::compaction; // Import the compact function
-use std::collections::BTreeMap; // For BTreeMap
-use std::io::{self, Write}; // For std::io::Result
-use std::fs::File; // For File::create
-use std::io::BufWriter; // For BufWriter::new
+use serde_json::{json, Value};
+use crate::core::lsm::sstable::SSTable;
 
+pub fn main() {
+    use std::collections::BTreeMap;
 
-pub fn write_test_data(file_path: &str, data: &BTreeMap<Vec<u8>, Vec<u8>>) -> std::io::Result<()> {
-    let file = File::create(file_path)?;
-    let mut writer = BufWriter::new(file);
+    let mut data = BTreeMap::new();
 
-    for (key, value) in data {
-        writer.write_all(key)?;
-        writer.write_all(b"\n")?;
-        writer.write_all(value)?;
-        writer.write_all(b"\n")?;
+    // Example JSON messages
+    let message1 = json!({
+        "message_id": "msg123",
+        "timestamp": "2024-12-25T14:30:00Z",
+        "chat_room_id": "room456",
+        "sender_id": "user789",
+        "recipient_id": "user012",
+        "message": "Hello, how are you?",
+        "metadata": {
+            "is_edited": false,
+            "is_deleted": false
+        }
+    });
+    let message2 = json!({
+        "message_id": "msg124",
+        "timestamp": "2024-12-25T15:00:00Z",
+        "chat_room_id": "room457",
+        "sender_id": "user790",
+        "recipient_id": "user013",
+        "message": "Hi! I'm good, thanks.",
+        "metadata": {
+            "is_edited": false,
+            "is_deleted": false
+        }
+    });
+
+    // Insert data into BTreeMap
+    data.insert(b"msg123".to_vec(), serde_json::to_vec(&message1).unwrap());
+    data.insert(b"msg124".to_vec(), serde_json::to_vec(&message2).unwrap());
+
+    // Write SSTable
+    let sstable = SSTable::write(&data, "sstable_test.dat").unwrap();
+    println!(
+        "SSTable written with timestamp range: {:?}",
+        sstable.timestamp_range
+    );
+
+    // Read SSTable
+    let read_data = sstable.read().unwrap();
+    for (key, value) in read_data {
+        println!("Key: {:?}", String::from_utf8(key).unwrap());
+        println!("Value: {:?}", serde_json::from_slice::<Value>(&value).unwrap());
     }
-
-    Ok(())
-}
-
-pub fn main() -> std::io::Result<()> {
-    // Step 1: Prepare test data
-    let mut sstable1_data = BTreeMap::new();
-    sstable1_data.insert(b"Key1".to_vec(), b"Value1".to_vec());
-    sstable1_data.insert(b"Key2".to_vec(), b"Value2".to_vec());
-
-    let mut sstable2_data = BTreeMap::new();
-    sstable2_data.insert(b"Key2".to_vec(), b"Value3".to_vec());
-    sstable2_data.insert(b"Key3".to_vec(), b"Value4".to_vec());
-
-    // Step 2: Write to SSTable files
-    write_test_data("sstable1.txt", &sstable1_data)?;
-    write_test_data("sstable2.txt", &sstable2_data)?;
-
-    // Step 3: Create SSTable objects
-    let sstable1 = SSTable::new("sstable1.txt");
-    let sstable2 = SSTable::new("sstable2.txt");
-
-    // Step 4: Perform compaction
-    crate::core::lsm::compaction::compact::<Vec<u8>, Vec<u8>>(vec![sstable1, sstable2], "compacted_sstable.txt")?;
-
-    // Step 5: Verify output
-    let compacted = SSTable::new("compacted_sstable.txt");
-    let compacted_data = compacted.read()?;
-
-    println!("Compacted SSTable Data:");
-    for (key, value) in compacted_data {
-        println!("{:?} -> {:?}", String::from_utf8_lossy(&key), String::from_utf8_lossy(&value));
-    }
-
-    Ok(())
 }

@@ -1,65 +1,106 @@
-use std::collections::BTreeMap; // For BTreeMap
-use std::fs::{File, OpenOptions}; // For file operations
-use std::io::{BufRead, BufReader, BufWriter, Read, Write}; // For buffered reading/writing
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::{self, BufReader, Read, Write};
+use std::io::BufWriter;
+use serde_json::Value;
 
 
-#[derive(Debug, Clone)]
-pub struct SSTable{
-    file_path:String,
+#[derive(Clone)]
+pub struct SSTable {
+    pub file_path: String,          // Path to the SSTable file.
+    pub timestamp_range: (u64, u64), // Timestamp range covered by this SSTable.
 }
 
-impl SSTable{
-    pub fn new(file_path: &str)->Self {
-        SSTable{
-            file_path:file_path.to_string(),
+impl SSTable {
+    /// Create a new SSTable instance with the given file path and timestamp range.
+    pub fn new(file_path: &str, timestamp_range: (u64, u64)) -> Self {
+        Self {
+            file_path: file_path.to_string(),
+            timestamp_range,
         }
     }
 
-    pub fn write<K,V>(&self, data: &BTreeMap<K,V>) -> std::io::Result<()>
-    where
-        K: AsRef<[u8]>,
-        V: AsRef<[u8]>,
-    {
-        let file = OpenOptions::new().create(true).write(true).truncate(true).open(&self.file_path)?;
-        let mut writer = BufWriter::new(file);
+    /// Write data from any source implementing the `DataSource` trait to an SSTable.
+    pub fn write<D: DataSource>(source: &D, file_path: &str) -> io::Result<Self> {
+        let mut file = BufWriter::new(File::create(file_path)?);
+        let mut min_timestamp = u64::MAX;
+        let mut max_timestamp = u64::MIN;
 
-        for (key,value) in data.iter(){
-            writer.write_all(key.as_ref())?;
-            writer.write_all(b"\n")?;
-            writer.write_all(value.as_ref())?;
-            writer.write_all(b"\n")?;
-        } 
-        writer.flush()?;
-        Ok(())
+        for (key, value) in source.iter() {
+            // Parse the JSON value to extract the timestamp
+            let value_json: Value = serde_json::from_slice(&value).unwrap();
+            let timestamp_str = value_json["timestamp"]
+                .as_str()
+                .expect("Timestamp should be a string");
+            let timestamp = Self::parse_timestamp(timestamp_str);
+
+            min_timestamp = min_timestamp.min(timestamp);
+            max_timestamp = max_timestamp.max(timestamp);
+
+            // Write the key and value
+            file.write_all(&(key.len() as u32).to_be_bytes())?; // Write key length
+            file.write_all(&key)?;                              // Write key
+            file.write_all(&(value.len() as u32).to_be_bytes())?; // Write value length
+            file.write_all(&value)?;                            // Write value
+        }
+
+        Ok(Self::new(file_path, (min_timestamp, max_timestamp)))
     }
 
-    pub fn read(&self) -> std::io::Result<BTreeMap<Vec<u8>,Vec<u8>>>{
-        let file= File::open(&self.file_path)?;
-        let mut reader= BufReader::new(file);
-        let mut data= BTreeMap::new();
-        let mut key = Vec::new();
-        let mut value= Vec::new();
+    /// Read all key-value pairs from the SSTable.
+    pub fn read(&self) -> io::Result<BTreeMap<Vec<u8>, Vec<u8>>> {
+        let file = BufReader::new(File::open(&self.file_path)?);
+        let mut reader = file;
+        let mut data = BTreeMap::new();
 
-        loop{
-            key.clear();
-            value.clear();
-
-            if reader.read_until(b'\n', &mut key)? ==0 {
-                break;
+        loop {
+            // Read key length (u32 - 4 bytes)
+            let mut key_len_buf = [0u8; 4];
+            if reader.read_exact(&mut key_len_buf).is_err() {
+                break; // EOF or error
             }
-            
-            reader.read_until(b'\n', &mut value)?;
+            let key_len = u32::from_be_bytes(key_len_buf) as usize;
 
-            if let Some(_) = key.last(){
-                key.pop();
-            }
-            if let Some(_)= value.last(){
-                value.pop();
-            }
-            data.insert(key.clone(),value.clone());
+            // Read the key
+            let mut key = vec![0u8; key_len];
+            reader.read_exact(&mut key)?;
 
-            
+            // Read value length (u32 - 4 bytes)
+            let mut value_len_buf = [0u8; 4];
+            reader.read_exact(&mut value_len_buf)?;
+            let value_len = u32::from_be_bytes(value_len_buf) as usize;
+
+            // Read the value
+            let mut value = vec![0u8; value_len];
+            reader.read_exact(&mut value)?;
+
+            // Insert the key-value pair into the BTreeMap
+            data.insert(key, value);
         }
+
         Ok(data)
+    }
+
+    /// Helper function to parse ISO 8601 timestamp into a Unix timestamp
+    fn parse_timestamp(timestamp: &str) -> u64 {
+        use chrono::{DateTime, NaiveDateTime, Utc};
+
+        let datetime: DateTime<Utc> = DateTime::parse_from_rfc3339(timestamp)
+            .expect("Failed to parse ISO 8601 timestamp")
+            .with_timezone(&Utc);
+
+        datetime.timestamp() as u64
+    }
+}
+
+/// Define a trait for generic data sources
+pub trait DataSource {
+    fn iter(&self) -> Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_>;
+}
+
+/// Implement `DataSource` for BTreeMap
+impl DataSource for BTreeMap<Vec<u8>, Vec<u8>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + '_> {
+        Box::new(self.iter().map(|(k, v)| (k.clone(), v.clone())))
     }
 }
