@@ -1,52 +1,58 @@
-use serde_json::{json, Value};
-use crate::core::lsm::sstable::SSTable;
+use std::collections::BTreeMap;
 
-pub fn main() {
-    use std::collections::BTreeMap;
+use crate::core::lsm::sstable::{SSTable, DataSource};
+use crate::core::lsm::compaction::TieredStorage;
 
+pub fn main() -> std::io::Result<()> {
+    let tier_sizes = vec![1, 5, 10]; // Example tier size ranges.
+    let mut storage = TieredStorage::new(tier_sizes);
+
+    use chrono::{Utc, Duration};
+
+for i in 1..=6 {
     let mut data = BTreeMap::new();
 
-    // Example JSON messages
-    let message1 = json!({
-        "message_id": "msg123",
-        "timestamp": "2024-12-25T14:30:00Z",
+    // Generate ISO 8601 timestamp.
+    let timestamp = Utc::now() + Duration::seconds(i as i64 * 100); // Increment timestamps.
+    let timestamp_str = timestamp.to_rfc3339(); // Convert to ISO 8601 format.
+
+    let key = format!("msg{}", i).as_bytes().to_vec();
+    let value = serde_json::to_vec(&serde_json::json!({
+        "message_id": format!("msg{}", i),
+        "timestamp": timestamp_str, // Pass timestamp as a valid ISO 8601 string.
         "chat_room_id": "room456",
-        "sender_id": "user789",
+        "sender_id": format!("user{}", i),
         "recipient_id": "user012",
-        "message": "Hello, how are you?",
+        "message": format!("Message {}", i),
         "metadata": {
             "is_edited": false,
             "is_deleted": false
         }
-    });
-    let message2 = json!({
-        "message_id": "msg124",
-        "timestamp": "2024-12-25T15:00:00Z",
-        "chat_room_id": "room457",
-        "sender_id": "user790",
-        "recipient_id": "user013",
-        "message": "Hi! I'm good, thanks.",
-        "metadata": {
-            "is_edited": false,
-            "is_deleted": false
-        }
-    });
+    }))?;
 
-    // Insert data into BTreeMap
-    data.insert(b"msg123".to_vec(), serde_json::to_vec(&message1).unwrap());
-    data.insert(b"msg124".to_vec(), serde_json::to_vec(&message2).unwrap());
+    data.insert(key.clone(), value);
 
-    // Write SSTable
-    let sstable = SSTable::write(&data, "sstable_test.dat").unwrap();
-    println!(
-        "SSTable written with timestamp range: {:?}",
-        sstable.timestamp_range
-    );
-
-    // Read SSTable
-    let read_data = sstable.read().unwrap();
-    for (key, value) in read_data {
-        println!("Key: {:?}", String::from_utf8(key).unwrap());
-        println!("Value: {:?}", serde_json::from_slice::<Value>(&value).unwrap());
+    // Add data as SSTable.
+    let file_path = format!("sstable_{}.sst", i);
+    storage.add_data_source(data, &file_path)?;
     }
+    // Add sample data as SSTables.
+    
+
+    // Print out tiers after compaction.
+    println!("Tiers after compaction:");
+    for (tier, sstables) in &storage.tiers {
+        println!("Tier {}: {} SSTables", tier, sstables.len());
+        for sstable in sstables {
+            println!(
+                "  SSTable {} -> Timestamp Range: {:?}",
+                sstable.file_path, sstable.timestamp_range
+                
+            );
+            let count = SSTable::count_messages_in_sstable(&sstable.file_path)?;
+                println!("Number of messages in the SSTable: {}", count);
+        }
+    }
+
+    Ok(())
 }

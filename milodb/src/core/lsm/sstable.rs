@@ -4,21 +4,58 @@ use std::io::{self, BufReader, Read, Write};
 use std::io::BufWriter;
 use serde_json::Value;
 
-
 #[derive(Clone)]
 pub struct SSTable {
     pub file_path: String,          // Path to the SSTable file.
     pub timestamp_range: (u64, u64), // Timestamp range covered by this SSTable.
+    pub tier: u64
 }
 
 impl SSTable {
     /// Create a new SSTable instance with the given file path and timestamp range.
-    pub fn new(file_path: &str, timestamp_range: (u64, u64)) -> Self {
+    pub fn new(file_path: &str, timestamp_range: (u64, u64), tier:u64 ) -> Self {
         Self {
             file_path: file_path.to_string(),
             timestamp_range,
+            tier
         }
     }
+   
+
+/// Count the number of messages (key-value pairs) in an SSTable.
+pub fn count_messages_in_sstable(file_path: &str) -> io::Result<usize> {
+    let file = File::open(file_path)?;
+    let mut reader = BufReader::new(file);
+    let mut count = 0;
+
+    loop {
+        // Read key length (4 bytes as u32).
+        let mut key_len_buf = [0u8; 4];
+        if reader.read_exact(&mut key_len_buf).is_err() {
+            break; // EOF or error
+        }
+        let key_len = u32::from_be_bytes(key_len_buf) as usize;
+
+        // Skip the key data.
+        let mut key = vec![0u8; key_len];
+        reader.read_exact(&mut key)?;
+
+        // Read value length (4 bytes as u32).
+        let mut value_len_buf = [0u8; 4];
+        reader.read_exact(&mut value_len_buf)?;
+        let value_len = u32::from_be_bytes(value_len_buf) as usize;
+
+        // Skip the value data.
+        let mut value = vec![0u8; value_len];
+        reader.read_exact(&mut value)?;
+
+        // Increment the count for this key-value pair.
+        count += 1;
+    }
+
+    Ok(count)
+}
+
 
     /// Write data from any source implementing the `DataSource` trait to an SSTable.
     pub fn write<D: DataSource>(source: &D, file_path: &str) -> io::Result<Self> {
@@ -33,6 +70,7 @@ impl SSTable {
                 .as_str()
                 .expect("Timestamp should be a string");
             let timestamp = Self::parse_timestamp(timestamp_str);
+            println!("timestamp is {}",timestamp_str);
 
             min_timestamp = min_timestamp.min(timestamp);
             max_timestamp = max_timestamp.max(timestamp);
@@ -44,7 +82,8 @@ impl SSTable {
             file.write_all(&value)?;                            // Write value
         }
 
-        Ok(Self::new(file_path, (min_timestamp, max_timestamp)))
+        Ok(Self::new(file_path, (min_timestamp, max_timestamp),1))
+    
     }
 
     /// Read all key-value pairs from the SSTable.
