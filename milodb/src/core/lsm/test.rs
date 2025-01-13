@@ -9,7 +9,7 @@ pub fn main() -> std::io::Result<()> {
 
     use chrono::{Utc, Duration};
 
-for i in 1..=6 {
+for i in 1..=10 {
     let mut data = BTreeMap::new();
 
     // Generate ISO 8601 timestamp.

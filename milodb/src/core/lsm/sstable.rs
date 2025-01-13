@@ -5,6 +5,7 @@ use std::io::BufWriter;
 use serde_json::Value;
 
 #[derive(Clone)]
+#[derive(Debug)]
 pub struct SSTable {
     pub file_path: String,          // Path to the SSTable file.
     pub timestamp_range: (u64, u64), // Timestamp range covered by this SSTable.
@@ -82,7 +83,7 @@ pub fn count_messages_in_sstable(file_path: &str) -> io::Result<usize> {
             file.write_all(&value)?;                            // Write value
         }
 
-        Ok(Self::new(file_path, (min_timestamp, max_timestamp),1))
+        Ok(Self::new(file_path, (min_timestamp, max_timestamp),0))
     
     }
 
