@@ -1,43 +1,42 @@
 use std::collections::BTreeMap;
 
-use crate::core::lsm::sstable::{SSTable, DataSource};
 use crate::core::lsm::compaction::TieredStorage;
+use crate::core::lsm::sstable::SSTable;
+use chrono::{Duration, Utc};
 
 pub fn main() -> std::io::Result<()> {
-    let tier_sizes = vec![1, 5, 10]; // Example tier size ranges.
+    let tier_sizes = vec![1,3,5]; // Example tier size ranges.
     let mut storage = TieredStorage::new(tier_sizes);
 
-    use chrono::{Utc, Duration};
+    
+    for i in 1..=30 {
+        let mut data = BTreeMap::new();
 
-for i in 1..=10 {
-    let mut data = BTreeMap::new();
+        // Generate ISO 8601 timestamp.
+        let timestamp = Utc::now() + Duration::seconds(i as i64 * 100); // Increment timestamps.
+        let timestamp_str = timestamp.to_rfc3339(); // Convert to ISO 8601 format.
 
-    // Generate ISO 8601 timestamp.
-    let timestamp = Utc::now() + Duration::seconds(i as i64 * 100); // Increment timestamps.
-    let timestamp_str = timestamp.to_rfc3339(); // Convert to ISO 8601 format.
+        let key = format!("msg{}", i).as_bytes().to_vec();
+        let value = serde_json::to_vec(&serde_json::json!({
+            "message_id": format!("msg{}", i),
+            "timestamp": timestamp_str, // Pass timestamp as a valid ISO 8601 string.
+            "chat_room_id": "room456",
+            "sender_id": format!("user{}", i),
+            "recipient_id": "user012",
+            "message": format!("Message {}", i),
+            "metadata": {
+                "is_edited": false,
+                "is_deleted": false
+            }
+        }))?;
 
-    let key = format!("msg{}", i).as_bytes().to_vec();
-    let value = serde_json::to_vec(&serde_json::json!({
-        "message_id": format!("msg{}", i),
-        "timestamp": timestamp_str, // Pass timestamp as a valid ISO 8601 string.
-        "chat_room_id": "room456",
-        "sender_id": format!("user{}", i),
-        "recipient_id": "user012",
-        "message": format!("Message {}", i),
-        "metadata": {
-            "is_edited": false,
-            "is_deleted": false
-        }
-    }))?;
+        data.insert(key.clone(), value);
 
-    data.insert(key.clone(), value);
-
-    // Add data as SSTable.
-    let file_path = format!("sstable_{}.sst", i);
-    storage.add_data_source(data, &file_path)?;
+        // Add data as SSTable.
+        let file_path = format!("sstable_{}.sst", i);
+        storage.add_data_source(data, &file_path)?;
     }
     // Add sample data as SSTables.
-    
 
     // Print out tiers after compaction.
     println!("Tiers after compaction:");
@@ -47,10 +46,9 @@ for i in 1..=10 {
             println!(
                 "  SSTable {} -> Timestamp Range: {:?}",
                 sstable.file_path, sstable.timestamp_range
-                
             );
             let count = SSTable::count_messages_in_sstable(&sstable.file_path)?;
-                println!("Number of messages in the SSTable: {}", count);
+            println!("Number of messages in the SSTable: {}", count);
         }
     }
 

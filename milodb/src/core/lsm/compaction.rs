@@ -21,8 +21,9 @@ impl TieredStorage {
     pub fn add_sstable(&mut self, sstable: SSTable) {
         let timestamp = sstable.timestamp_range.1; // Use the max timestamp.
         let mut assigned_tier:u64 = 0;
-
+        
         // Assign the SSTable to the appropriate tier.
+        //will give everyone tier 0
         for (i, &tier_size) in self.tier_sizes.iter().enumerate() {
             if timestamp <= tier_size {
                 assigned_tier = i as u64;
@@ -39,12 +40,11 @@ impl TieredStorage {
     /// Trigger compaction if the tier exceeds a certain threshold.
     fn trigger_compaction(&mut self, tier: u64)-> io::Result<()> {
         
-        
         // Temporarily take the SSTables for the tier out of the map.
         if let Some(mut sstables) = self.tiers.remove(&tier) {
             let mut size=0;
             println!("{}", sstables.len());
-            if sstables.len() > 4 { // Example threshold
+            if sstables.len() > 2 { // Example threshold
                 println!("Compacting tier {}...", tier);
     
                 // Perform compaction.
@@ -58,14 +58,12 @@ impl TieredStorage {
             }
     
             // Reinsert the updated SSTables back into the map.
-            if size > 10{
-                self.tiers.insert(2, sstables);
-            }
-            else if size>5 {
-                self.tiers.insert(1, sstables);
-            }
-            else{
-                self.tiers.insert(0, sstables);
+            if size > 5 {
+                self.tiers.entry(2).or_insert_with(Vec::new).extend(sstables);
+            } else if size > 3 {
+                self.tiers.entry(1).or_insert_with(Vec::new).extend(sstables);
+            } else {
+                self.tiers.entry(0).or_insert_with(Vec::new).extend(sstables);
             }
             
         }
@@ -95,10 +93,10 @@ impl TieredStorage {
         }else{
             let no_of_sstables_in_tier = if self.tiers.contains_key(&tier_to_be_inserted) {
             
-                self.tiers[&tier_to_be_inserted].len() + 1
+                self.tiers[&tier_to_be_inserted].len()
             } else {
                 println!("here");
-                1
+                0
             };
 
             output_path = format!("tier_{}_{}.sst",tier_to_be_inserted,no_of_sstables_in_tier);
@@ -117,10 +115,10 @@ impl TieredStorage {
     }
 
     pub fn find_tier(count:u64)-> u64{
-        if count>10{
+        if count>5{
             2
        }
-       else if count>5{
+       else if count>3{
            1
        }
        else {
